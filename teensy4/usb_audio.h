@@ -101,6 +101,9 @@ private:
 	static volatile uint8_t write_index;
 	static volatile uint8_t read_index;
 	static volatile uint16_t buffer_offset;
+    static volatile uint32_t underflow_count;
+    static volatile uint32_t overflow_count;
+    static volatile uint32_t last_log_ms;
 	audio_block_t *inputQueueArray[2];
 };
 #endif // __cplusplus

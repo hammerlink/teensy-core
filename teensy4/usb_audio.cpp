@@ -293,6 +293,9 @@ audio_block_t * AudioOutputUSB::buffer_right[BUFFER_COUNT];
 volatile uint8_t AudioOutputUSB::write_index = 0;
 volatile uint8_t AudioOutputUSB::read_index = 0;
 volatile uint16_t AudioOutputUSB::buffer_offset = 0;
+volatile uint32_t AudioOutputUSB::underflow_count = 0;
+volatile uint32_t AudioOutputUSB::overflow_count = 0;
+volatile uint32_t AudioOutputUSB::last_log_ms = 0;
 
 /*DMAMEM*/ uint16_t usb_audio_transmit_buffer[AUDIO_TX_SIZE/2] __attribute__ ((used, aligned(32)));
 
@@ -372,6 +375,7 @@ void AudioOutputUSB::update(void)
 	
 	if (next_write == read_index) {
 		// Buffer full - overrun
+		AudioOutputUSB::overflow_count++;
 		audio_block_t *discard_left = buffer_left[read_index];
 		audio_block_t *discard_right = buffer_right[read_index];
 		read_index = (read_index + 1) % BUFFER_COUNT;
@@ -396,6 +400,18 @@ unsigned int usb_audio_transmit_callback(void)
 	static uint32_t count=5;
 	uint32_t avail, num, target, len=0;
 	audio_block_t *left, *right;
+	uint32_t current_ms = millis();
+	
+	// Log stats every second
+	if (current_ms - AudioOutputUSB::last_log_ms >= 1000) {
+		Serial.print("USB Audio Stats - Underflows: ");
+		Serial.print(AudioOutputUSB::underflow_count);
+		Serial.print(", Overflows: ");
+		Serial.println(AudioOutputUSB::overflow_count);
+		AudioOutputUSB::underflow_count = 0;
+		AudioOutputUSB::overflow_count = 0;
+		AudioOutputUSB::last_log_ms = current_ms;
+	}
 
 	if (++count < 10) {   // TODO: dynamic adjust to match USB rate
 		target = 44;
@@ -409,9 +425,10 @@ unsigned int usb_audio_transmit_callback(void)
 		
 		if (AudioOutputUSB::read_index == AudioOutputUSB::write_index) {
 			// Buffer underrun - no data available
+			AudioOutputUSB::underflow_count++;
 			memset(usb_audio_transmit_buffer + len, 0, num * 4);
 			break;
-		}
+        }
 
 		left = AudioOutputUSB::buffer_left[AudioOutputUSB::read_index];
 		right = AudioOutputUSB::buffer_right[AudioOutputUSB::read_index];
