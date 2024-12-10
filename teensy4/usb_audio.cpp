@@ -389,149 +389,48 @@ void AudioOutputUSB::update(void)
 // no data to transmit
 unsigned int usb_audio_transmit_callback(void)
 {
-    static uint32_t count=5;
-    static uint32_t underrun_count = 0;
-    static uint32_t overflow_count = 0;
-    static uint32_t total_calls = 0;
-    uint32_t avail, num, target, offset, len=0;
-    audio_block_t *left, *right;
+	static uint32_t count=5;
+	uint32_t avail, num, target, offset, len=0;
+	audio_block_t *left, *right;
 
-    total_calls++;
-    // Print periodic statistics every 1000 calls
-    if (total_calls % 1000 == 0) {
-        Serial.println("\n=== USB Audio Statistics ===");
-        
-        // Memory Statistics
-        extern unsigned long _heap_start;
-        extern unsigned long _heap_end;
-        extern char *__brkval;
-        
-        uint32_t used = (uint32_t)__brkval - (uint32_t)&_heap_start;
-        uint32_t total = (uint32_t)&_heap_end - (uint32_t)&_heap_start;
-        uint32_t free = total - used;
-        
-        Serial.print("Memory - Total: "); Serial.print(total);
-        Serial.print(" bytes, Used: "); Serial.print(used);
-        Serial.print(" bytes ("); Serial.print((used * 100.0) / total, 1);
-        Serial.print("%), Free: "); Serial.print(free);
-        Serial.println(" bytes");
+	if (++count < 10) {   // TODO: dynamic adjust to match USB rate
+		target = 44;
+	} else {
+		count = 0;
+		target = 45;
+	}
+	while (len < target) {
+		num = target - len;
+		left = AudioOutputUSB::left_1st;
+		if (left == NULL) {
+			// buffer underrun - PC is consuming too quickly
+			memset(usb_audio_transmit_buffer + len, 0, num * 4);
+			//serial_print("%");
+			break;
+		}
+		right = AudioOutputUSB::right_1st;
+		offset = AudioOutputUSB::offset_1st;
 
-        // Add RAM usage percentage bar
-        Serial.print("RAM Usage: [");
-        int barWidth = 30;
-        int usedBars = (used * barWidth) / total;
-        for(int i = 0; i < barWidth; i++) {
-            if(i < usedBars) Serial.print("#");
-            else Serial.print("-");
-        }
-        Serial.println("]");
+		avail = AUDIO_BLOCK_SAMPLES - offset;
+		if (num > avail) num = avail;
 
-        // Audio buffer statistics
-        uint32_t audio_buffer_size = AUDIO_BLOCK_SAMPLES * sizeof(int16_t);
-        uint32_t total_audio_buffers = 4; // L1, L2, R1, R2
-        uint32_t audio_memory = audio_buffer_size * total_audio_buffers;
-        
-        Serial.print("Audio Buffers: "); Serial.print(audio_memory);
-        Serial.print(" bytes ("); 
-        Serial.print((audio_memory * 100.0) / total, 1);
-        Serial.println("% of total RAM)");
-
-        // Rest of your existing statistics
-        Serial.print("Total Calls: "); Serial.println(total_calls);
-        // ... rest of your statistics ...
-        
-        Serial.println("==========================\n");
-    }
-
-    // Debug buffer status before processing
-    // Serial.print("USB["); Serial.print(total_calls);
-    // Serial.print("] Buffers: L1="); Serial.print((uint32_t)AudioOutputUSB::left_1st, HEX);
-    // Serial.print(" L2="); Serial.print((uint32_t)AudioOutputUSB::left_2nd, HEX);
-    // Serial.print(" R1="); Serial.print((uint32_t)AudioOutputUSB::right_1st, HEX);
-    // Serial.print(" R2="); Serial.print((uint32_t)AudioOutputUSB::right_2nd, HEX);
-    // Serial.print(" Offset="); Serial.println(AudioOutputUSB::offset_1st);
-    // Serial.println("%");
-
-    if (++count < 10) {
-        target = 44;
-    } else {
-        count = 0;
-        target = 45;
-    }
-
-    while (len < target) {
-        num = target - len;
-        left = AudioOutputUSB::left_1st;
-        if (left == NULL) {
-            underrun_count++;
-            // Log underrun statistics
-            // Serial.print("UNDERRUN["); Serial.print(total_calls);
-            // Serial.print("] Count="); Serial.print(underrun_count);
-            // Serial.print(" Rate="); 
-            // Serial.print((float)underrun_count * 100 / total_calls);
-            // Serial.println("%");
-                
-            memset(usb_audio_transmit_buffer + len, 0, num * 4);
-            break;
-        }
-
-        // Check for buffer overflow condition
-        if (AudioOutputUSB::left_2nd != NULL && AudioOutputUSB::offset_1st < 10) {
-            overflow_count++;
-            // Serial.print("OVERFLOW["); Serial.print(total_calls);
-            // Serial.print("] Count="); Serial.print(overflow_count);
-            // Serial.print(" Rate=");
-            // Serial.print((float)overflow_count * 100 / total_calls);
-            // Serial.println("%");
-        }
-
-        right = AudioOutputUSB::right_1st;
-        offset = AudioOutputUSB::offset_1st;
-        avail = AUDIO_BLOCK_SAMPLES - offset;
-
-        // Log buffer margin
-        // Serial.print("Margin["); Serial.print(total_calls);
-        // Serial.print("] Available="); Serial.print(avail);
-        // Serial.print(" Required="); Serial.print(num);
-        // Serial.print(" Diff="); Serial.println((long)avail - (long)num);
-
-        if (num > avail) num = avail;
-
-        copy_from_buffers((uint32_t *)usb_audio_transmit_buffer + len,
-            left->data + offset, right->data + offset, num);
-        len += num;
-        offset += num;
-
-        // Print periodic statistics every 1000 calls
-        if (total_calls % 1000 == 0) {
-            Serial.println("\n=== USB Audio Statistics ===");
-            Serial.print("Total Calls: "); Serial.println(total_calls);
-            Serial.print("Underruns: "); Serial.print(underrun_count);
-            Serial.print(" ("); 
-            Serial.print((float)underrun_count * 100 / total_calls);
-            Serial.println("%)");
-            Serial.print("Overflows: "); Serial.print(overflow_count);
-            Serial.print(" (");
-            Serial.print((float)overflow_count * 100 / total_calls);
-            Serial.println("%)");
-            Serial.print("Current Buffer Level: "); Serial.println(avail);
-            Serial.println("==========================\n");
-        }
-
-        if (offset >= AUDIO_BLOCK_SAMPLES) {
-            AudioStream::release(left);
-            AudioStream::release(right);
-            AudioOutputUSB::left_1st = AudioOutputUSB::left_2nd;
-            AudioOutputUSB::left_2nd = NULL;
-            AudioOutputUSB::right_1st = AudioOutputUSB::right_2nd;
-            AudioOutputUSB::right_2nd = NULL;
-            AudioOutputUSB::offset_1st = 0;
-        } else {
-            AudioOutputUSB::offset_1st = offset;
-        }
-    }
-
-    return target * 4;
+		copy_from_buffers((uint32_t *)usb_audio_transmit_buffer + len,
+			left->data + offset, right->data + offset, num);
+		len += num;
+		offset += num;
+		if (offset >= AUDIO_BLOCK_SAMPLES) {
+			AudioStream::release(left);
+			AudioStream::release(right);
+			AudioOutputUSB::left_1st = AudioOutputUSB::left_2nd;
+			AudioOutputUSB::left_2nd = NULL;
+			AudioOutputUSB::right_1st = AudioOutputUSB::right_2nd;
+			AudioOutputUSB::right_2nd = NULL;
+			AudioOutputUSB::offset_1st = 0;
+		} else {
+			AudioOutputUSB::offset_1st = offset;
+		}
+	}
+	return target * 4;
 }
 #endif
 
