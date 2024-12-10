@@ -95,11 +95,12 @@ public:
 	friend unsigned int usb_audio_transmit_callback(void);
 private:
 	static bool update_responsibility;
-	static audio_block_t *left_1st;
-	static audio_block_t *left_2nd;
-	static audio_block_t *right_1st;
-	static audio_block_t *right_2nd;
-	static uint16_t offset_1st;
+	static const uint8_t BUFFER_COUNT = 4;  // Number of buffers in the circular queue
+	static audio_block_t *buffer_left[BUFFER_COUNT];
+	static audio_block_t *buffer_right[BUFFER_COUNT];
+	static volatile uint8_t write_index;
+	static volatile uint8_t read_index;
+	static volatile uint16_t buffer_offset;
 	audio_block_t *inputQueueArray[2];
 };
 #endif // __cplusplus
