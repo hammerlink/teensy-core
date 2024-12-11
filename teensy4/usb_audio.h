@@ -86,25 +86,34 @@ private:
 	static uint8_t receive_flag;
 };
 
+#define MAX_USB_CHANNELS 8  // Maximum supported channels
+
 class AudioOutputUSB : public AudioStream
 {
 public:
-	AudioOutputUSB(void) : AudioStream(2, inputQueueArray) { begin(); }
+	// Constructor now takes number of channels (default=2 for stereo)
+	AudioOutputUSB(uint8_t channels = 2) : AudioStream(channels, inputQueueArray) { 
+		begin(channels); 
+	}
 	virtual void update(void);
-	void begin(void);
+	void begin(uint8_t channels = 2);
 	friend unsigned int usb_audio_transmit_callback(void);
+
+	// Getter/setter for number of channels
+	static uint8_t getChannelCount() { return num_channels; }
+	
 private:
 	static bool update_responsibility;
 	static const uint8_t BUFFER_COUNT = 4;  // Number of buffers in the circular queue
-	static audio_block_t *buffer_left[BUFFER_COUNT];
-	static audio_block_t *buffer_right[BUFFER_COUNT];
+	static audio_block_t *buffer_channels[MAX_USB_CHANNELS][BUFFER_COUNT];
+	static uint8_t num_channels;  // Current number of active channels
 	static volatile uint8_t write_index;
 	static volatile uint8_t read_index;
 	static volatile uint16_t buffer_offset;
     static volatile uint32_t underflow_count;
     static volatile uint32_t overflow_count;
     static volatile uint32_t last_log_ms;
-	audio_block_t *inputQueueArray[2];
+	audio_block_t *inputQueueArray[MAX_USB_CHANNELS];  // Increased size to handle max channels
 };
 #endif // __cplusplus
 
