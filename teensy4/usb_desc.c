@@ -69,8 +69,9 @@
 //   USB Device
 // **************************************************************
 
-#define LSB(n) ((n) & 255)
-#define MSB(n) (((n) >> 8) & 255)
+#define LSB(n) ((int)(n) & 255)
+#define MSB(n) (((int)(n) >> 8) & 255)
+#define HSB(n) (((int)(n) >> 16) & 255)
 
 #ifdef CDC_IAD_DESCRIPTOR
 #ifndef DEVICE_CLASS
@@ -1444,7 +1445,7 @@ PROGMEM const uint8_t usb_config_descriptor_480[CONFIG_DESC_SIZE] = {
 	//0x03, 0x06,				// wTerminalType, 0x0603 = Line Connector
 	0x02, 0x06,				// wTerminalType, 0x0602 = Digital Audio
 	0,					// bAssocTerminal, 0 = unidirectional
-	2,					// bNrChannels
+	AUDIO_CHANNELS,					// bNrChannels
 	0x03, 0x00,				// wChannelConfig, 0x0003 = Left & Right Front
 	0,					// iChannelNames
 	0, 					// iTerminal
@@ -1466,7 +1467,7 @@ PROGMEM const uint8_t usb_config_descriptor_480[CONFIG_DESC_SIZE] = {
 	3,					// bTerminalID
 	0x01, 0x01,				// wTerminalType, 0x0101 = USB_STREAMING
 	0,					// bAssocTerminal, 0 = unidirectional
-	2,					// bNrChannels
+	AUDIO_CHANNELS,					// bNrChannels
 	0x03, 0x00,				// wChannelConfig, 0x0003 = Left & Right Front
 	0,					// iChannelNames
 	0, 					// iTerminal
@@ -1528,7 +1529,7 @@ PROGMEM const uint8_t usb_config_descriptor_480[CONFIG_DESC_SIZE] = {
 	0x24,					// bDescriptorType = CS_INTERFACE
 	2,					// bDescriptorSubtype = FORMAT_TYPE
 	1,					// bFormatType = FORMAT_TYPE_I
-	2,					// bNrChannels = 2
+	AUDIO_CHANNELS,					// bNrChannels = 2
 	2,					// bSubFrameSize = 2 byte
 	16,					// bBitResolution = 16 bits
 	1,					// bSamFreqType = 1 frequency
@@ -1587,7 +1588,7 @@ PROGMEM const uint8_t usb_config_descriptor_480[CONFIG_DESC_SIZE] = {
 	0x24,					// bDescriptorType = CS_INTERFACE
 	2,					// bDescriptorSubtype = FORMAT_TYPE
 	1,					// bFormatType = FORMAT_TYPE_I
-	2,					// bNrChannels = 2
+	AUDIO_CHANNELS,					// bNrChannels = 2
 	2,					// bSubFrameSize = 2 byte
 	16,					// bBitResolution = 16 bits
 	1,					// bSamFreqType = 1 frequency
@@ -2458,7 +2459,7 @@ PROGMEM const uint8_t usb_config_descriptor_12[CONFIG_DESC_SIZE] = {
 	//0x03, 0x06,				// wTerminalType, 0x0603 = Line Connector
 	0x02, 0x06,				// wTerminalType, 0x0602 = Digital Audio
 	0,					// bAssocTerminal, 0 = unidirectional
-	2,					// bNrChannels
+	AUDIO_CHANNELS,					// bNrChannels
 	0x03, 0x00,				// wChannelConfig, 0x0003 = Left & Right Front
 	0,					// iChannelNames
 	0, 					// iTerminal
@@ -2480,7 +2481,7 @@ PROGMEM const uint8_t usb_config_descriptor_12[CONFIG_DESC_SIZE] = {
 	3,					// bTerminalID
 	0x01, 0x01,				// wTerminalType, 0x0101 = USB_STREAMING
 	0,					// bAssocTerminal, 0 = unidirectional
-	2,					// bNrChannels
+	AUDIO_CHANNELS,					// bNrChannels
 	0x03, 0x00,				// wChannelConfig, 0x0003 = Left & Right Front
 	0,					// iChannelNames
 	0, 					// iTerminal
@@ -2542,9 +2543,9 @@ PROGMEM const uint8_t usb_config_descriptor_12[CONFIG_DESC_SIZE] = {
 	0x24,					// bDescriptorType = CS_INTERFACE
 	2,					// bDescriptorSubtype = FORMAT_TYPE
 	1,					// bFormatType = FORMAT_TYPE_I
-	2,					// bNrChannels = 2
-	2,					// bSubFrameSize = 2 byte
-	16,					// bBitResolution = 16 bits
+	AUDIO_CHANNELS,					// bNrChannels = 2
+	AUDIO_SAMPLE_BYTES,					// bSubFrameSize = 2 byte
+	AUDIO_BIT_DEPTH,					// bBitResolution = 16 bits
 	1,					// bSamFreqType = 1 frequency
 	LSB(44100), MSB(44100), 0,		// tSamFreq
 	// Standard AS Isochronous Audio Data Endpoint Descriptor
@@ -2601,9 +2602,9 @@ PROGMEM const uint8_t usb_config_descriptor_12[CONFIG_DESC_SIZE] = {
 	0x24,					// bDescriptorType = CS_INTERFACE
 	2,					// bDescriptorSubtype = FORMAT_TYPE
 	1,					// bFormatType = FORMAT_TYPE_I
-	2,					// bNrChannels = 2
-	2,					// bSubFrameSize = 2 byte
-	16,					// bBitResolution = 16 bits
+	AUDIO_CHANNELS,					// bNrChannels = 2
+	AUDIO_SAMPLE_BYTES,					// bSubFrameSize = 2 byte
+	AUDIO_BIT_DEPTH,					// bBitResolution = 16 bits
 	1,					// bSamFreqType = 1 frequency
 	LSB(44100), MSB(44100), 0,		// tSamFreq
 	// Standard AS Isochronous Audio Data Endpoint Descriptor

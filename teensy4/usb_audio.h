@@ -92,11 +92,11 @@ class AudioOutputUSB : public AudioStream
 {
 public:
 	// Constructor now takes number of channels (default=2 for stereo)
-	AudioOutputUSB(uint8_t channels = 2) : AudioStream(channels, inputQueueArray) { 
+	AudioOutputUSB(uint8_t channels = AUDIO_CHANNELS) : AudioStream(channels, inputQueueArray) {
 		begin(channels); 
 	}
 	virtual void update(void);
-	void begin(uint8_t channels = 2);
+	void begin(uint8_t channels = AUDIO_CHANNELS);
 	friend unsigned int usb_audio_transmit_callback(void);
 
 	// Getter/setter for number of channels
