@@ -35,82 +35,72 @@
 
 #ifdef AUDIO_INTERFACE
 
-bool AudioInputUSB::update_responsibility;
-audio_block_t * AudioInputUSB::incoming_left;
-audio_block_t * AudioInputUSB::incoming_right;
-audio_block_t * AudioInputUSB::ready_left;
-audio_block_t * AudioInputUSB::ready_right;
-uint16_t AudioInputUSB::incoming_count;
-uint8_t AudioInputUSB::receive_flag;
-
-struct usb_audio_features_struct AudioInputUSB::features = {0,0,FEATURE_MAX_VOLUME/2};
-
-extern volatile uint8_t usb_high_speed;
-static void rx_event(transfer_t *t);
-static void tx_event(transfer_t *t);
-
-/*static*/ transfer_t rx_transfer __attribute__ ((used, aligned(32)));
-/*static*/ transfer_t sync_transfer __attribute__ ((used, aligned(32)));
-/*static*/ transfer_t tx_transfer __attribute__ ((used, aligned(32)));
-DMAMEM static uint8_t rx_buffer[AUDIO_RX_SIZE] __attribute__ ((aligned(32)));
-DMAMEM static uint8_t tx_buffer[AUDIO_RX_SIZE] __attribute__ ((aligned(32)));
-DMAMEM uint32_t usb_audio_sync_feedback __attribute__ ((aligned(32)));
-
-uint8_t usb_audio_receive_setting=0;
-uint8_t usb_audio_transmit_setting=0;
+// Shared variables
+uint8_t usb_audio_receive_setting = 0;
+uint8_t usb_audio_transmit_setting = 0;
 uint8_t usb_audio_sync_nbytes;
 uint8_t usb_audio_sync_rshift;
+uint32_t feedback_accumulator = 739875226; // 44.1 * 2^24
+uint32_t usb_audio_sync_feedback __attribute__ ((aligned(32)));
+volatile uint32_t usb_audio_underrun_count = 0;
+volatile uint32_t usb_audio_overrun_count = 0;
 
-uint32_t feedback_accumulator;
+// Transfer structures and buffers
+static transfer_t rx_transfer __attribute__ ((used, aligned(32)));
+static transfer_t sync_transfer __attribute__ ((used, aligned(32)));
+static transfer_t tx_transfer __attribute__ ((used, aligned(32)));
+DMAMEM uint8_t rx_buffer[AUDIO_RX_SIZE] __attribute__ ((aligned(32)));
+DMAMEM uint8_t tx_buffer[AUDIO_TX_SIZE] __attribute__ ((aligned(32)));
 
-volatile uint32_t usb_audio_underrun_count;
-volatile uint32_t usb_audio_overrun_count;
+// External declarations
+extern volatile uint8_t usb_high_speed;
 
 
-static void rx_event(transfer_t *t)
-{
-	if (t) {
-		int len = AUDIO_RX_SIZE - ((rx_transfer.status >> 16) & 0x7FFF);
-		printf("rx %u\n", len);
-		usb_audio_receive_callback(len);
-	}
-	usb_prepare_transfer(&rx_transfer, rx_buffer, AUDIO_RX_SIZE, 0);
-	arm_dcache_delete(&rx_buffer, AUDIO_RX_SIZE);
-	usb_receive(AUDIO_RX_ENDPOINT, &rx_transfer);
-}
+// Forward declarations
+static void rx_event(transfer_t *t);
+static void tx_event(transfer_t *t);
+static void sync_event(transfer_t *t);
 
+// Shared event handler for sync feedback
 static void sync_event(transfer_t *t)
 {
-	// USB 2.0 Specification, 5.12.4.2 Feedback, pages 73-75
-	//printf("sync %x\n", sync_transfer.status); // too slow, can't print this much
-	usb_audio_sync_feedback = feedback_accumulator >> usb_audio_sync_rshift;
-	usb_prepare_transfer(&sync_transfer, &usb_audio_sync_feedback, usb_audio_sync_nbytes, 0);
-	arm_dcache_flush(&usb_audio_sync_feedback, usb_audio_sync_nbytes);
-	usb_transmit(AUDIO_SYNC_ENDPOINT, &sync_transfer);
+    usb_audio_sync_feedback = feedback_accumulator >> usb_audio_sync_rshift;
+    usb_prepare_transfer(&sync_transfer, &usb_audio_sync_feedback, usb_audio_sync_nbytes, 0);
+    arm_dcache_flush(&usb_audio_sync_feedback, usb_audio_sync_nbytes);
+    usb_transmit(AUDIO_SYNC_ENDPOINT, &sync_transfer);
 }
 
+// Shared USB audio configuration
 void usb_audio_configure(void)
 {
-	printf("usb_audio_configure\n");
-	usb_audio_underrun_count = 0;
-	usb_audio_overrun_count = 0;
-	feedback_accumulator = 739875226; // 44.1 * 2^24
-	if (usb_high_speed) {
-		usb_audio_sync_nbytes = 4;
-		usb_audio_sync_rshift = 8;
-	} else {
-		usb_audio_sync_nbytes = 3;
-		usb_audio_sync_rshift = 10;
-	}
-	memset(&rx_transfer, 0, sizeof(rx_transfer));
-	usb_config_rx_iso(AUDIO_RX_ENDPOINT, AUDIO_RX_SIZE, 1, rx_event);
-	rx_event(NULL);
-	memset(&sync_transfer, 0, sizeof(sync_transfer));
-	usb_config_tx_iso(AUDIO_SYNC_ENDPOINT, usb_audio_sync_nbytes, 1, sync_event);
-	sync_event(NULL);
-	memset(&tx_transfer, 0, sizeof(tx_transfer));
-	usb_config_tx_iso(AUDIO_TX_ENDPOINT, AUDIO_TX_SIZE, 1, tx_event);
-	tx_event(NULL);
+    printf("usb_audio_configure\n");
+    usb_audio_underrun_count = 0;
+    usb_audio_overrun_count = 0;
+    feedback_accumulator = 739875226; // 44.1 * 2^24
+    
+    // Configure based on USB speed
+    if (usb_high_speed) {
+        usb_audio_sync_nbytes = 4;
+        usb_audio_sync_rshift = 8;
+    } else {
+        usb_audio_sync_nbytes = 3;
+        usb_audio_sync_rshift = 10;
+    }
+    
+    // Initialize transfers
+    memset(&rx_transfer, 0, sizeof(rx_transfer));
+    memset(&sync_transfer, 0, sizeof(sync_transfer));
+    memset(&tx_transfer, 0, sizeof(tx_transfer));
+    
+    // Configure endpoints
+    usb_config_rx_iso(AUDIO_RX_ENDPOINT, AUDIO_RX_SIZE, 1, rx_event);
+    usb_config_tx_iso(AUDIO_SYNC_ENDPOINT, usb_audio_sync_nbytes, 1, sync_event);
+    usb_config_tx_iso(AUDIO_TX_ENDPOINT, AUDIO_TX_SIZE, 1, tx_event);
+    
+    // Initialize events
+    rx_event(NULL);
+    sync_event(NULL);
+    tx_event(NULL);
 }
 
 void AudioInputUSB::begin(void)
@@ -287,12 +277,17 @@ void AudioInputUSB::update(void)
 
 
 #if 1
+#define MAX_USB_CHANNELS 8  // Maximum supported channels
+
 bool AudioOutputUSB::update_responsibility;
-audio_block_t * AudioOutputUSB::left_1st;
-audio_block_t * AudioOutputUSB::left_2nd;
-audio_block_t * AudioOutputUSB::right_1st;
-audio_block_t * AudioOutputUSB::right_2nd;
-uint16_t AudioOutputUSB::offset_1st;
+audio_block_t * AudioOutputUSB::buffer_channels[MAX_USB_CHANNELS][BUFFER_COUNT];
+uint8_t AudioOutputUSB::num_channels = 2; // Default to stereo, can be 2,4,6,8
+volatile uint8_t AudioOutputUSB::write_index = 0;
+volatile uint8_t AudioOutputUSB::read_index = 0;
+volatile uint16_t AudioOutputUSB::buffer_offset = 0;
+volatile uint32_t AudioOutputUSB::underflow_count = 0;
+volatile uint32_t AudioOutputUSB::overflow_count = 0;
+volatile uint32_t AudioOutputUSB::last_log_ms = 0;
 
 /*DMAMEM*/ uint16_t usb_audio_transmit_buffer[AUDIO_TX_SIZE/2] __attribute__ ((used, aligned(32)));
 
@@ -307,78 +302,111 @@ static void tx_event(transfer_t *t)
 }
 
 
-void AudioOutputUSB::begin(void)
+void AudioOutputUSB::begin(uint8_t channels)
 {
 	update_responsibility = false;
-	left_1st = NULL;
-	right_1st = NULL;
+	write_index = 0;
+	read_index = 0;
+	buffer_offset = 0;
+	num_channels = (channels > 0 && channels <= MAX_USB_CHANNELS && (channels % 2 == 0)) ? channels : 2;
+	
+	for (int ch = 0; ch < MAX_USB_CHANNELS; ch++) {
+		for (int i = 0; i < BUFFER_COUNT; i++) {
+			buffer_channels[ch][i] = NULL;
+		}
+	}
 }
 
-static void copy_from_buffers(uint32_t *dst, int16_t *left, int16_t *right, unsigned int len)
+static void copy_from_buffers(uint32_t *dst, int16_t **channel_data, uint8_t num_channels, unsigned int len)
 {
-	// TODO: optimize...
+	
 	while (len > 0) {
-		*dst++ = (*right++ << 16) | (*left++ & 0xFFFF);
+		uint32_t sample = 0;
+		for (int ch = 0; ch < num_channels; ch += 2) {
+			// Pack two channels into each 32-bit word
+			if (ch == 0) {
+				sample = (channel_data[ch+1][0] << 16) | (channel_data[ch][0] & 0xFFFF);
+				*dst++ = sample;
+			} else {
+				sample = (channel_data[ch+1][0] << 16) | (channel_data[ch][0] & 0xFFFF);
+				*dst++ = sample;
+			}
+			// Advance the channel data pointers
+			channel_data[ch]++;
+			channel_data[ch+1]++;
+		}
 		len--;
 	}
 }
 
 void AudioOutputUSB::update(void)
 {
-	audio_block_t *left, *right;
+	audio_block_t *blocks[MAX_USB_CHANNELS];
 
-	// TODO: we shouldn't be writing to these......
-	//left = receiveReadOnly(0); // input 0 = left channel
-	//right = receiveReadOnly(1); // input 1 = right channel
-	left = receiveWritable(0); // input 0 = left channel
-	right = receiveWritable(1); // input 1 = right channel
+	// Receive blocks for all channels
+	for (int ch = 0; ch < num_channels; ch++) {
+		blocks[ch] = receiveWritable(ch);
+	}
+	
 	if (usb_audio_transmit_setting == 0) {
-		if (left) release(left);
-		if (right) release(right);
-		if (left_1st) { release(left_1st); left_1st = NULL; }
-		if (left_2nd) { release(left_2nd); left_2nd = NULL; }
-		if (right_1st) { release(right_1st); right_1st = NULL; }
-		if (right_2nd) { release(right_2nd); right_2nd = NULL; }
-		offset_1st = 0;
+		for (int ch = 0; ch < num_channels; ch++) {
+			if (blocks[ch]) release(blocks[ch]);
+		}
+		__disable_irq();
+		for (int ch = 0; ch < num_channels; ch++) {
+			for (int i = 0; i < BUFFER_COUNT; i++) {
+				if (buffer_channels[ch][i]) {
+					release(buffer_channels[ch][i]);
+					buffer_channels[ch][i] = NULL;
+				}
+			}
+		}
+		write_index = 0;
+		read_index = 0;
+		buffer_offset = 0;
+		__enable_irq();
 		return;
 	}
-	if (left == NULL) {
-		left = allocate();
-		if (left == NULL) {
-			if (right) release(right);
-			return;
+
+	// Allocate missing blocks and initialize with silence
+	for (int ch = 0; ch < num_channels; ch++) {
+		if (blocks[ch] == NULL) {
+			blocks[ch] = allocate();
+			if (blocks[ch] == NULL) {
+				// If allocation fails, release all previously allocated blocks
+				for (int j = 0; j < ch; j++) {
+					if (blocks[j]) release(blocks[j]);
+				}
+				return;
+			}
+			memset(blocks[ch]->data, 0, sizeof(blocks[ch]->data));
 		}
-		memset(left->data, 0, sizeof(left->data));
+		
 	}
-	if (right == NULL) {
-		right = allocate();
-		if (right == NULL) {
-			release(left);
-			return;
-		}
-		memset(right->data, 0, sizeof(right->data));
-	}
+
 	__disable_irq();
-	if (left_1st == NULL) {
-		left_1st = left;
-		right_1st = right;
-		offset_1st = 0;
-	} else if (left_2nd == NULL) {
-		left_2nd = left;
-		right_2nd = right;
-	} else {
-		// buffer overrun - PC is consuming too slowly
-		audio_block_t *discard1 = left_1st;
-		left_1st = left_2nd;
-		left_2nd = left;
-		audio_block_t *discard2 = right_1st;
-		right_1st = right_2nd;
-		right_2nd = right;
-		offset_1st = 0; // TODO: discard part of this data?
-		//serial_print("*");
-		release(discard1);
-		release(discard2);
+	uint8_t next_write = (write_index + 1) % BUFFER_COUNT;
+	
+	if (next_write == read_index) {
+		// Buffer full - overrun
+		AudioOutputUSB::overflow_count++;
+		// Release all channel buffers at read_index
+		for (int ch = 0; ch < num_channels; ch++) {
+			if (buffer_channels[ch][read_index]) {
+				release(buffer_channels[ch][read_index]);
+				buffer_channels[ch][read_index] = NULL;
+			}
+		}
+		read_index = (read_index + 1) % BUFFER_COUNT;
+		buffer_offset = 0;
+		
 	}
+	
+	// Store all channel buffers at write_index
+	for (int ch = 0; ch < num_channels; ch++) {
+		buffer_channels[ch][write_index] = blocks[ch];
+	}
+	write_index = next_write;
 	__enable_irq();
 }
 
@@ -390,8 +418,19 @@ void AudioOutputUSB::update(void)
 unsigned int usb_audio_transmit_callback(void)
 {
 	static uint32_t count=5;
-	uint32_t avail, num, target, offset, len=0;
-	audio_block_t *left, *right;
+	uint32_t avail, num, target, len=0;
+	uint32_t current_ms = millis();
+	
+	// Log stats every second
+	if (current_ms - AudioOutputUSB::last_log_ms >= 1000) {
+		Serial.print("USB Audio Stats - Underflows: ");
+		Serial.print(AudioOutputUSB::underflow_count);
+		Serial.print(", Overflows: ");
+		Serial.println(AudioOutputUSB::overflow_count);
+		AudioOutputUSB::underflow_count = 0;
+		AudioOutputUSB::overflow_count = 0;
+		AudioOutputUSB::last_log_ms = current_ms;
+	}
 
 	if (++count < 10) {   // TODO: dynamic adjust to match USB rate
 		target = 44;
@@ -399,35 +438,55 @@ unsigned int usb_audio_transmit_callback(void)
 		count = 0;
 		target = 45;
 	}
+
 	while (len < target) {
 		num = target - len;
-		left = AudioOutputUSB::left_1st;
-		if (left == NULL) {
-			// buffer underrun - PC is consuming too quickly
+		
+		if (AudioOutputUSB::read_index == AudioOutputUSB::write_index) {
+			// Buffer underrun - no data available
+			AudioOutputUSB::underflow_count++;
 			memset(usb_audio_transmit_buffer + len, 0, num * 4);
-			//serial_print("%");
+			break;
+        }
+
+		// Check if all channels have valid buffers
+		bool valid_buffers = true;
+		int16_t *channel_ptrs[MAX_USB_CHANNELS];
+		for (int ch = 0; ch < AudioOutputUSB::num_channels; ch++) {
+			audio_block_t *block = AudioOutputUSB::buffer_channels[ch][AudioOutputUSB::read_index];
+			if (!block) {
+				valid_buffers = false;
+				break;
+			}
+			channel_ptrs[ch] = block->data + AudioOutputUSB::buffer_offset;
+		}
+
+		if (!valid_buffers) {
+			// Invalid state - should never happen
+			memset(usb_audio_transmit_buffer + len, 0, num * 4);
 			break;
 		}
-		right = AudioOutputUSB::right_1st;
-		offset = AudioOutputUSB::offset_1st;
 
-		avail = AUDIO_BLOCK_SAMPLES - offset;
+		avail = AUDIO_BLOCK_SAMPLES - AudioOutputUSB::buffer_offset;
 		if (num > avail) num = avail;
 
 		copy_from_buffers((uint32_t *)usb_audio_transmit_buffer + len,
-			left->data + offset, right->data + offset, num);
+			channel_ptrs, AudioOutputUSB::num_channels, num);
+		
 		len += num;
-		offset += num;
-		if (offset >= AUDIO_BLOCK_SAMPLES) {
-			AudioStream::release(left);
-			AudioStream::release(right);
-			AudioOutputUSB::left_1st = AudioOutputUSB::left_2nd;
-			AudioOutputUSB::left_2nd = NULL;
-			AudioOutputUSB::right_1st = AudioOutputUSB::right_2nd;
-			AudioOutputUSB::right_2nd = NULL;
-			AudioOutputUSB::offset_1st = 0;
-		} else {
-			AudioOutputUSB::offset_1st = offset;
+		AudioOutputUSB::buffer_offset += num;
+
+		if (AudioOutputUSB::buffer_offset >= AUDIO_BLOCK_SAMPLES) {
+			// Release all channel buffers
+			for (int ch = 0; ch < AudioOutputUSB::num_channels; ch++) {
+				audio_block_t *block = AudioOutputUSB::buffer_channels[ch][AudioOutputUSB::read_index];
+				if (block) {
+					AudioStream::release(block);
+					AudioOutputUSB::buffer_channels[ch][AudioOutputUSB::read_index] = NULL;
+				}
+			}
+			AudioOutputUSB::read_index = (AudioOutputUSB::read_index + 1) % AudioOutputUSB::BUFFER_COUNT;
+			AudioOutputUSB::buffer_offset = 0;
 		}
 	}
 	return target * 4;
