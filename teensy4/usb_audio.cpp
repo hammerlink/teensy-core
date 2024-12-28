@@ -35,82 +35,72 @@
 
 #ifdef AUDIO_INTERFACE
 
-bool AudioInputUSB::update_responsibility;
-audio_block_t * AudioInputUSB::incoming_left;
-audio_block_t * AudioInputUSB::incoming_right;
-audio_block_t * AudioInputUSB::ready_left;
-audio_block_t * AudioInputUSB::ready_right;
-uint16_t AudioInputUSB::incoming_count;
-uint8_t AudioInputUSB::receive_flag;
-
-struct usb_audio_features_struct AudioInputUSB::features = {0,0,FEATURE_MAX_VOLUME/2};
-
-extern volatile uint8_t usb_high_speed;
-static void rx_event(transfer_t *t);
-static void tx_event(transfer_t *t);
-
-/*static*/ transfer_t rx_transfer __attribute__ ((used, aligned(32)));
-/*static*/ transfer_t sync_transfer __attribute__ ((used, aligned(32)));
-/*static*/ transfer_t tx_transfer __attribute__ ((used, aligned(32)));
-DMAMEM static uint8_t rx_buffer[AUDIO_RX_SIZE] __attribute__ ((aligned(32)));
-DMAMEM static uint8_t tx_buffer[AUDIO_RX_SIZE] __attribute__ ((aligned(32)));
-DMAMEM uint32_t usb_audio_sync_feedback __attribute__ ((aligned(32)));
-
-uint8_t usb_audio_receive_setting=0;
-uint8_t usb_audio_transmit_setting=0;
+// Shared variables
+uint8_t usb_audio_receive_setting = 0;
+uint8_t usb_audio_transmit_setting = 0;
 uint8_t usb_audio_sync_nbytes;
 uint8_t usb_audio_sync_rshift;
+uint32_t feedback_accumulator = 739875226; // 44.1 * 2^24
+uint32_t usb_audio_sync_feedback __attribute__ ((aligned(32)));
+volatile uint32_t usb_audio_underrun_count = 0;
+volatile uint32_t usb_audio_overrun_count = 0;
 
-uint32_t feedback_accumulator;
+// Transfer structures and buffers
+static transfer_t rx_transfer __attribute__ ((used, aligned(32)));
+static transfer_t sync_transfer __attribute__ ((used, aligned(32)));
+static transfer_t tx_transfer __attribute__ ((used, aligned(32)));
+DMAMEM uint8_t rx_buffer[AUDIO_RX_SIZE] __attribute__ ((aligned(32)));
+DMAMEM uint8_t tx_buffer[AUDIO_TX_SIZE] __attribute__ ((aligned(32)));
 
-volatile uint32_t usb_audio_underrun_count;
-volatile uint32_t usb_audio_overrun_count;
+// External declarations
+extern volatile uint8_t usb_high_speed;
 
 
-static void rx_event(transfer_t *t)
-{
-	if (t) {
-		int len = AUDIO_RX_SIZE - ((rx_transfer.status >> 16) & 0x7FFF);
-		printf("rx %u\n", len);
-		usb_audio_receive_callback(len);
-	}
-	usb_prepare_transfer(&rx_transfer, rx_buffer, AUDIO_RX_SIZE, 0);
-	arm_dcache_delete(&rx_buffer, AUDIO_RX_SIZE);
-	usb_receive(AUDIO_RX_ENDPOINT, &rx_transfer);
-}
+// Forward declarations
+static void rx_event(transfer_t *t);
+static void tx_event(transfer_t *t);
+static void sync_event(transfer_t *t);
 
+// Shared event handler for sync feedback
 static void sync_event(transfer_t *t)
 {
-	// USB 2.0 Specification, 5.12.4.2 Feedback, pages 73-75
-	//printf("sync %x\n", sync_transfer.status); // too slow, can't print this much
-	usb_audio_sync_feedback = feedback_accumulator >> usb_audio_sync_rshift;
-	usb_prepare_transfer(&sync_transfer, &usb_audio_sync_feedback, usb_audio_sync_nbytes, 0);
-	arm_dcache_flush(&usb_audio_sync_feedback, usb_audio_sync_nbytes);
-	usb_transmit(AUDIO_SYNC_ENDPOINT, &sync_transfer);
+    usb_audio_sync_feedback = feedback_accumulator >> usb_audio_sync_rshift;
+    usb_prepare_transfer(&sync_transfer, &usb_audio_sync_feedback, usb_audio_sync_nbytes, 0);
+    arm_dcache_flush(&usb_audio_sync_feedback, usb_audio_sync_nbytes);
+    usb_transmit(AUDIO_SYNC_ENDPOINT, &sync_transfer);
 }
 
+// Shared USB audio configuration
 void usb_audio_configure(void)
 {
-	printf("usb_audio_configure\n");
-	usb_audio_underrun_count = 0;
-	usb_audio_overrun_count = 0;
-	feedback_accumulator = 739875226; // 44.1 * 2^24
-	if (usb_high_speed) {
-		usb_audio_sync_nbytes = 4;
-		usb_audio_sync_rshift = 8;
-	} else {
-		usb_audio_sync_nbytes = 3;
-		usb_audio_sync_rshift = 10;
-	}
-	memset(&rx_transfer, 0, sizeof(rx_transfer));
-	usb_config_rx_iso(AUDIO_RX_ENDPOINT, AUDIO_RX_SIZE, 1, rx_event);
-	rx_event(NULL);
-	memset(&sync_transfer, 0, sizeof(sync_transfer));
-	usb_config_tx_iso(AUDIO_SYNC_ENDPOINT, usb_audio_sync_nbytes, 1, sync_event);
-	sync_event(NULL);
-	memset(&tx_transfer, 0, sizeof(tx_transfer));
-	usb_config_tx_iso(AUDIO_TX_ENDPOINT, AUDIO_TX_SIZE, 1, tx_event);
-	tx_event(NULL);
+    printf("usb_audio_configure\n");
+    usb_audio_underrun_count = 0;
+    usb_audio_overrun_count = 0;
+    feedback_accumulator = 739875226; // 44.1 * 2^24
+    
+    // Configure based on USB speed
+    if (usb_high_speed) {
+        usb_audio_sync_nbytes = 4;
+        usb_audio_sync_rshift = 8;
+    } else {
+        usb_audio_sync_nbytes = 3;
+        usb_audio_sync_rshift = 10;
+    }
+    
+    // Initialize transfers
+    memset(&rx_transfer, 0, sizeof(rx_transfer));
+    memset(&sync_transfer, 0, sizeof(sync_transfer));
+    memset(&tx_transfer, 0, sizeof(tx_transfer));
+    
+    // Configure endpoints
+    usb_config_rx_iso(AUDIO_RX_ENDPOINT, AUDIO_RX_SIZE, 1, rx_event);
+    usb_config_tx_iso(AUDIO_SYNC_ENDPOINT, usb_audio_sync_nbytes, 1, sync_event);
+    usb_config_tx_iso(AUDIO_TX_ENDPOINT, AUDIO_TX_SIZE, 1, tx_event);
+    
+    // Initialize events
+    rx_event(NULL);
+    sync_event(NULL);
+    tx_event(NULL);
 }
 
 void AudioInputUSB::begin(void)
